@@ -18,4 +18,6 @@ dependencies = [
 	"python-multipart>=0.0.20",
 	"fastapi>=0.116.1",
 	"debugpy>=1.8.16",
+	"langchain-groq>=0.2.1",
+	"langchain-ollama>=0.2.1",
 ]
