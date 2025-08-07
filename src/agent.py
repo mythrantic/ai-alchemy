@@ -305,4 +305,4 @@ class CustomAgentExecutor:
     
 
 # Initi the agent executor
-agent_executor = CustomAgentExecutor(max_iterations=3)
+agent_executor = CustomAgentExecutor()
