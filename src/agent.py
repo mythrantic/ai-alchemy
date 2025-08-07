@@ -38,21 +38,23 @@ def get_llm(config: AgentConfig):
             api_key=config.groq_api_key,
             temperature=0.0,
             streaming=True
-        ).configurable_fields(
+        )
+    elif config.model == "ollama":
+        llm = ChatOllama(
+            model=config.model_name,
+            api_url=config.ollama_api_url,
+            temperature=0.0,
+            streaming=True,
+        )
+    else:
+        raise ValueError(f"Unsupported model: {config.model}. Supported models are: {config.supported_models}")
+    return llm.configurable_fields(
             callbacks=ConfigurableField(
                 id="callbacks",
                 name="Callbacks",
                 description="List of callbacks to use for streaming",
             )
         )
-    elif config.model == "ollama":
-        llm = ChatOllama(
-            model=config.model_name,
-            api_url=config.ollama_api_url,
-        )
-    else:
-        raise ValueError(f"Unsupported model: {config.model}. Supported models are: {config.supported_models}")
-    return llm
 
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -172,8 +174,135 @@ class QueueCallbackHandler(AsyncCallbackHandler):
             if token_or_done:
                 yield token_or_done
                 
+    async def on_llm_new_token(self, *args, **kwargs) -> None:
+        chunk = kwargs.get("chunk")
+        if chunk and chunk.message.additional_kwargs.get("too_calls"):
+            if chunk.message.additional_kwargs["tool_calls"][0]["function"]["name"] == "final_answer":
+                self.final_answer_seen = True
+        self.queue.put_nowait(kwargs.get("chunk"))
+        
+    async def on_llm_end(self, *args, **kwargs) -> None:
+        if not self.final_answer_seen:
+            self.queue.put_nowait("<<DONE>>")
+        else:
+            self.queue.put_nowait("<<STEP_END>>")
+        
+async def execute_tool(tool_call: AIMessage) -> ToolMessage:
+    tool_name = tool_call.tool_calls[0]["name"]
+    tool_args = tool_call.tool_calls[0]["args"]
+    tool_out = await name2tool[tool_name](**tool_args)
+    return ToolMessage(
+        content=f"{tool_out}",
+        tool_call_id=tool_call.tool_calls[0]["id"]
+    )
+    
+
+# Agent Executor
+class CustomAgentExecutor:
+    def __init(self, max_iterations: int = 3):
+        self.chat_history: list[BaseMessage] = []
+        self.max_iterations = max_iterations
+        self.agent = (
+            {
+                "input": lambda x: x["input"],
+                "chat_history": lambda x: x["chat_history"],
+                "agent_scratchpad": lambda x: x.get("agent_scratchpad", [])
+            }
+            | prompt
+            | get_llm(config=AgentConfig(model="groq")).bind_tools(tools, tool_choice="any")
+            )
+    async def invoke(self, input: str, streamer: QueueCallbackHandler, verbose: bool = False):
+        """invoke the agent. but this is done iteretively in a loop until we reach the final answe"""
+        count = 0
+        final_answer: str | None = None
+        agent_scratchpad: list[AIMessage | ToolMessage] = []
+        
+        # the streaming magic
+        async def stream(query: str) -> list[AIMessage]:
+            configured_agent = self.agent.with_config(
+                callbacks=[streamer]
+            )
             
+            ## the output dict that we eill be populating with our streamed output
+            outputs = []
+            async for token in configured_agent.astream({
+                "input": query,
+                "chat_history": self.chat_history,
+                "agent_scratchpad": agent_scratchpad
+            }):
+                tool_calls = token.additional_kwargs.get("tool_calls")
+                if tool_calls:
                     
-def agent_executor():
-    # Placeholder for the agent executor function
-    pass
+                    # first check if we have a tool call id  - this indicates neq tool
+                    if tool_calls[o]["id"]:
+                        outputs.append(token)
+                    else:
+                        # this is a tool call that we have already seen, so we just update the last token
+                        outputs[-1] += token
+                        
+                else:
+                    pass
+            return [
+                AIMessage(
+                    content=x.content,
+                    tool_calls=x.tool_calls,
+                    tool_call_id=x.tool_calls[0]["id"]
+                ) for x in outputs
+            ]
+        
+        while count < self.max_iterations:
+            ## invoke a step for the agent to generate a tool call
+            tool_calls = await stream(query=input)
+            
+            ## gathr the tool execution coroutines
+            tool_obs = await asyncio.gather(
+                *[execute_tool(tool_call) for tool_call in tool_calls]
+            )
+            
+            ## basictly the scrach pad we want is something like this ordered according to the tool calls id
+            """
+            !IMPORTANT! the order of tool calls and observations is important, but not the order of the tool call ids.
+            the tool call ids just need to be together. it doesnt matter if the tool call id 2 is before tool call id 1, as long as the tool call id 2 is followed by its observation
+            [
+                
+                AIMessage(content="...", tool_calls=[{"id": "1", "name": "search", "args": {"query": "..."}}]),
+                ToolMessage(content="...", tool_call_id="1"),
+                AIMessage(content="...", tool_calls=[{"id": "2", "name": "add", "args": {"x": 1, "y": 2}}]),
+                ToolMessage(content="3", tool_call_id="2"),
+            ]
+            """
+            
+            ## appemd tool calls and observations to the agent scratchpad in order
+            id2tool_obs = {tool_call.tool_call_id: tool_obs for tool_call, tool_obs in zip(tool_calls, tool_obs)}
+            
+            for tool_call in tool_calls:
+                agent_scratchpad.extend([
+                    tool_call, # AIMessage with tool call
+                    id2tool_obs[tool_call.tool_call_id] # ToolMessage with tool observation
+                ])
+                
+            count += 1
+            ## check if we have a final answer
+            found_final_answer = False
+            for tool_call in tool_calls:
+                if tool_call.tool_calls[0]["name"] == "final_answer":
+                    final_answer_call = tool_call.tool_calls[0]
+                    final_answer =  final_answer_call["args"]["answer"]
+                    found_final_answer = True
+                    break
+                
+            ## Only break the loop if we have a final answer
+            if found_final_answer:
+                break
+        
+        ## add the final output to the chat history, only the answer field
+        self.chat_history.extend({
+            HumanMessage(content=input),
+            AIMessage(content=final_answer if final_answer else "No final answer found")
+        })
+        
+        return final_answer_call if final_answer else {"answer": "No final answer found", "tools_used": []}
+    
+
+# Initi the agent executor
+agent_executor = CustomAgentExecutor(max_iterations=3)
