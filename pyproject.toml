@@ -13,4 +13,5 @@ dependencies = [
 	"langchain-community>=0.3.11",
 	"lance>=1.2.1",
 	"streamlit>=1.41.0",
+	"python-dotenv>=1.0.1",
 ]
