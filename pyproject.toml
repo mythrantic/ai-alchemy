@@ -21,3 +21,8 @@ dependencies = [
 	"langchain-groq>=0.2.1",
 	"langchain-ollama>=0.2.1",
 ]
+
+[dependency-groups]
+dev = [
+    "marimo>=0.14.16",
+]
