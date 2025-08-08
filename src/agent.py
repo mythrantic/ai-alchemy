@@ -11,6 +11,8 @@ from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, SecretStr
+from dotenv import load_dotenv
+load_dotenv()
 
 GROQ_API_KEY = SecretStr(os.getenv("GROQ_API_KEY", ""))
 OLLLAMA_API_URL = SecretStr(os.getenv("OLLLAMA_API_URL", "http://localhost:11434"))
@@ -176,13 +178,13 @@ class QueueCallbackHandler(AsyncCallbackHandler):
                 
     async def on_llm_new_token(self, *args, **kwargs) -> None:
         chunk = kwargs.get("chunk")
-        if chunk and chunk.message.additional_kwargs.get("too_calls"):
+        if chunk and chunk.message.additional_kwargs.get("tool_calls"):
             if chunk.message.additional_kwargs["tool_calls"][0]["function"]["name"] == "final_answer":
                 self.final_answer_seen = True
         self.queue.put_nowait(kwargs.get("chunk"))
         
     async def on_llm_end(self, *args, **kwargs) -> None:
-        if not self.final_answer_seen:
+        if self.final_answer_seen:
             self.queue.put_nowait("<<DONE>>")
         else:
             self.queue.put_nowait("<<STEP_END>>")
@@ -199,7 +201,7 @@ async def execute_tool(tool_call: AIMessage) -> ToolMessage:
 
 # Agent Executor
 class CustomAgentExecutor:
-    def __init(self, max_iterations: int = 3):
+    def __init__(self, max_iterations: int = 3):
         self.chat_history: list[BaseMessage] = []
         self.max_iterations = max_iterations
         self.agent = (
@@ -210,8 +212,9 @@ class CustomAgentExecutor:
             }
             | prompt
             | get_llm(config=AgentConfig(model="groq")).bind_tools(tools, tool_choice="any")
-            )
-    async def invoke(self, input: str, streamer: QueueCallbackHandler, verbose: bool = False):
+        )
+        
+    async def invoke(self, input: str, streamer: QueueCallbackHandler, verbose: bool = False) -> dict:
         """invoke the agent. but this is done iteretively in a loop until we reach the final answe"""
         count = 0
         final_answer: str | None = None
@@ -234,7 +237,7 @@ class CustomAgentExecutor:
                 if tool_calls:
                     
                     # first check if we have a tool call id  - this indicates neq tool
-                    if tool_calls[o]["id"]:
+                    if tool_calls[0]["id"]:
                         outputs.append(token)
                     else:
                         # this is a tool call that we have already seen, so we just update the last token
@@ -273,7 +276,8 @@ class CustomAgentExecutor:
             """
             
             ## appemd tool calls and observations to the agent scratchpad in order
-            id2tool_obs = {tool_call.tool_call_id: tool_obs for tool_call, tool_obs in zip(tool_calls, tool_obs)}
+            id2tool_obs = {tool_obs.tool_call_id: tool_obs for tool_call, tool_obs in zip(tool_calls, tool_obs)}
+
             
             for tool_call in tool_calls:
                 agent_scratchpad.extend([
@@ -296,10 +300,10 @@ class CustomAgentExecutor:
                 break
         
         ## add the final output to the chat history, only the answer field
-        self.chat_history.extend({
+        self.chat_history.extend([
             HumanMessage(content=input),
             AIMessage(content=final_answer if final_answer else "No final answer found")
-        })
+        ])
         
         return final_answer_call if final_answer else {"answer": "No final answer found", "tools_used": []}
     
