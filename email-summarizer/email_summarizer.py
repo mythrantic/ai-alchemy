@@ -11,21 +11,15 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import requests
-import json
 from datetime import datetime, timedelta
 import re
 import os
 from typing import List, Dict, Any
 import argparse
-import asyncio
-import aiohttp
-import markdown
+import mistune
+import markdownify
 from html import unescape
-from html.parser import HTMLParser
-
-from langchain.callbacks.base import BaseCallbackHandler, AsyncCallbackHandler
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import ConfigurableField
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
@@ -34,56 +28,36 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-class HTMLToTextParser(HTMLParser):
-    """Convert HTML to plain text for email analysis"""
-    def __init__(self):
-        super().__init__()
-        self.text_content = []
-        self.skip_tags = {'script', 'style', 'meta', 'link', 'head'}
-        self.current_tag = None
-    
-    def handle_starttag(self, tag, attrs):
-        self.current_tag = tag
-        # Add line breaks for block elements
-        if tag in {'p', 'div', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
-            self.text_content.append('\n')
-        elif tag in {'li'}:
-            self.text_content.append('\n• ')
-    
-    def handle_endtag(self, tag):
-        self.current_tag = None
-        # Add line breaks after block elements
-        if tag in {'p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
-            self.text_content.append('\n')
-    
-    def handle_data(self, data):
-        # Skip content from script/style tags
-        if self.current_tag not in self.skip_tags:
-            # Clean up whitespace but preserve structure
-            cleaned_data = ' '.join(data.split())
-            if cleaned_data:
-                self.text_content.append(cleaned_data)
-    
-    def get_text(self):
-        text = ''.join(self.text_content)
-        # Clean up excessive whitespace and line breaks
-        text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
-        text = re.sub(r'[ \t]+', ' ', text)
-        return text.strip()
-
 def html_to_text(html_content: str) -> str:
-    """Convert HTML to clean plain text"""
+    """Convert HTML to clean plain text using markdownify then to text"""
     if not html_content:
         return ""
     
-    # Decode HTML entities
-    html_content = unescape(html_content)
-    
-    # Parse HTML to text
-    parser = HTMLToTextParser()
     try:
-        parser.feed(html_content)
-        return parser.get_text()
+        # First convert HTML to Markdown using markdownify
+        markdown_content = markdownify.markdownify(
+            html_content, 
+            heading_style="ATX",  # Use # style headers
+            strip=['script', 'style', 'meta', 'link', 'head'],  # Remove unwanted tags
+            convert=['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li']
+        )
+        
+        # Clean up the markdown and convert to plain text
+        # Remove markdown formatting for plain text
+        text = markdown_content
+        # Remove markdown headers
+        text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+        # Remove markdown links but keep text
+        text = re.sub(r'\[([^\]]*)\]\([^\)]*\)', r'\1', text)
+        # Remove markdown emphasis
+        text = re.sub(r'\*\*([^\*]*)\*\*', r'\1', text)
+        text = re.sub(r'\*([^\*]*)\*', r'\1', text)
+        # Clean up whitespace
+        text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
+        text = re.sub(r'[ \t]+', ' ', text)
+        
+        return text.strip()
+        
     except Exception:
         # Fallback: simple regex-based HTML stripping
         text = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
@@ -502,7 +476,7 @@ Keep it concise but comprehensive.
             return False
     
     def send_email_notification(self, summary: str, email_count: int, recipient_email: str) -> bool:
-        """Send summary via email"""
+        """Send summary via email using mistune for Markdown to HTML conversion"""
         if not all([self.config.smtp_server, self.config.smtp_user, self.config.smtp_password]):
             print("❌ SMTP configuration incomplete")
             return False
@@ -514,132 +488,88 @@ Keep it concise but comprehensive.
             msg['To'] = recipient_email
             msg['Subject'] = f"📊 Email Summary Report - {email_count} emails analyzed"
             
-            # Convert markdown summary to HTML using the markdown module
-            html_summary = markdown.markdown(
-                summary, 
-                extensions=['tables', 'fenced_code', 'nl2br']
-            )
+            # Convert markdown summary to HTML using mistune
+            # Using mistune.html() which has all features enabled by default
+            html_summary = mistune.html(summary)
             
-            # Create HTML email body
+            # Create HTML email body with Tailwind CSS classes
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             html_body = f"""
             <!DOCTYPE html>
             <html>
             <head>
                 <meta charset="UTF-8">
-                <style>
-                    body {{
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        line-height: 1.6;
-                        color: #333;
-                        max-width: 800px;
-                        margin: 0 auto;
-                        padding: 20px;
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <script src="https://cdn.tailwindcss.com"></script>
+                <script>
+                tailwind.config = {{
+                    theme: {{
+                        extend: {{
+                            fontFamily: {{
+                                'sans': ['ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'sans-serif'],
+                            }}
+                        }}
                     }}
-                    .header {{
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        color: white;
-                        padding: 20px;
-                        border-radius: 10px 10px 0 0;
-                        text-align: center;
-                    }}
-                    .header h1 {{
-                        margin: 0;
-                        font-size: 24px;
-                    }}
-                    .meta-info {{
-                        background-color: #f8f9fa;
-                        padding: 15px;
-                        border-left: 4px solid #007bff;
-                        margin: 0;
-                    }}
-                    .content {{
-                        background-color: #ffffff;
-                        padding: 20px;
-                        border: 1px solid #e9ecef;
-                        border-radius: 0 0 10px 10px;
-                    }}
-                    .summary-box {{
-                        background-color: #f8f9fa;
-                        padding: 20px;
-                        border-radius: 8px;
-                        border-left: 4px solid #28a745;
-                        margin: 15px 0;
-                    }}
-                    table {{
-                        border-collapse: collapse;
-                        width: 100%;
-                        margin: 15px 0;
-                    }}
-                    th, td {{
-                        border: 1px solid #ddd;
-                        padding: 12px;
-                        text-align: left;
-                    }}
-                    th {{
-                        background-color: #f2f2f2;
-                        font-weight: bold;
-                    }}
-                    .footer {{
-                        text-align: center;
-                        padding: 15px;
-                        background-color: #f8f9fa;
-                        color: #6c757d;
-                        font-size: 14px;
-                        border-radius: 0 0 10px 10px;
-                    }}
-                    h1, h2, h3 {{
-                        color: #495057;
-                        margin-top: 25px;
-                        margin-bottom: 15px;
-                    }}
-                    ul {{
-                        padding-left: 20px;
-                    }}
-                    li {{
-                        margin-bottom: 8px;
-                    }}
-                    hr {{
-                        border: none;
-                        height: 2px;
-                        background: linear-gradient(to right, #667eea, #764ba2);
-                        margin: 20px 0;
-                    }}
-                    blockquote {{
-                        border-left: 4px solid #007bff;
-                        margin: 0;
-                        padding-left: 20px;
-                        color: #555;
-                    }}
-                    code {{
-                        background-color: #f8f9fa;
-                        padding: 2px 4px;
-                        border-radius: 3px;
-                        font-family: monospace;
-                    }}
-                </style>
+                }}
+                </script>
             </head>
-            <body>
-                <div class="header">
-                    <h1>📊 Email Summary Report</h1>
-                </div>
-                
-                <div class="meta-info">
-                    <strong>📅 Generated:</strong> {timestamp}<br>
-                    <strong>📧 Emails Analyzed:</strong> {email_count}<br>
-                    <strong>🤖 AI Model:</strong> {self.config.model.upper()} - {self.config.model_name}
-                </div>
-                
-                <div class="content">
-                    <div class="summary-box">
-                        {html_summary}
+            <body class="bg-gray-50 font-sans">
+                <div class="max-w-4xl mx-auto p-4">
+                    <!-- Header -->
+                    <div class="bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-t-lg p-6 text-center">
+                        <h1 class="text-2xl font-bold m-0">📊 Email Summary Report</h1>
+                    </div>
+                    
+                    <!-- Meta Info -->
+                    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-0">
+                        <div class="space-y-2 text-sm">
+                            <p><span class="font-semibold">📅 Generated:</span> {timestamp}</p>
+                            <p><span class="font-semibold">📧 Emails Analyzed:</span> {email_count}</p>
+                            <p><span class="font-semibold">🤖 AI Model:</span> {self.config.model.upper()} - {self.config.model_name}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Content -->
+                    <div class="bg-white border border-gray-200 rounded-b-lg p-6">
+                        <div class="bg-gray-50 border-l-4 border-green-500 rounded-lg p-5 my-4">
+                            <div class="prose prose-gray max-w-none">
+                                {html_summary}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <div class="text-center p-4 bg-gray-50 text-gray-600 text-sm rounded-b-lg">
+                        <p class="italic">This report was automatically generated by your Email Summary Bot.</p>
+                        <p class="text-xs mt-1">Powered by {self.config.model.upper()} AI</p>
                     </div>
                 </div>
                 
-                <div class="footer">
-                    <em>This report was automatically generated by your Email Summary Bot.</em><br>
-                    <small>Powered by {self.config.model.upper()} AI</small>
-                </div>
+                <style>
+                    /* Custom styles for email content */
+                    .prose h1 {{ @apply text-2xl font-bold text-gray-800 mt-6 mb-4; }}
+                    .prose h2 {{ @apply text-xl font-semibold text-gray-700 mt-5 mb-3; }}
+                    .prose h3 {{ @apply text-lg font-medium text-gray-600 mt-4 mb-2; }}
+                    .prose p {{ @apply mb-3 text-gray-700 leading-relaxed; }}
+                    .prose ul {{ @apply list-disc list-inside mb-3 space-y-1; }}
+                    .prose ol {{ @apply list-decimal list-inside mb-3 space-y-1; }}
+                    .prose li {{ @apply text-gray-700; }}
+                    .prose blockquote {{ @apply border-l-4 border-blue-500 pl-4 italic text-gray-600 my-4; }}
+                    .prose code {{ @apply bg-gray-100 text-red-600 px-1 py-0.5 rounded text-sm; }}
+                    .prose pre {{ @apply bg-gray-100 p-4 rounded-lg overflow-x-auto; }}
+                    .prose table {{ @apply w-full border-collapse border border-gray-300 my-4; }}
+                    .prose th {{ @apply bg-gray-100 border border-gray-300 p-3 text-left font-semibold; }}
+                    .prose td {{ @apply border border-gray-300 p-3; }}
+                    .prose hr {{ @apply border-0 h-px bg-gradient-to-r from-blue-500 to-purple-600 my-6; }}
+                    .prose del {{ @apply line-through text-gray-500; }}
+                    .prose a {{ @apply text-blue-600 hover:text-blue-800 underline; }}
+                    .prose strong {{ @apply font-semibold text-gray-800; }}
+                    .prose em {{ @apply italic; }}
+                    
+                    /* Footnote styles */
+                    .footnote {{ @apply text-sm text-gray-500; }}
+                    .footnote-ref {{ @apply text-blue-600 no-underline hover:underline; }}
+                </style>
             </body>
             </html>
             """
