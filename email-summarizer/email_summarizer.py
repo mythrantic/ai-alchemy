@@ -489,40 +489,383 @@ class NotificationService:
             raise NotificationError(f"Email notification failed: {e}")
     
     def _create_html_template(self, html_summary: str, timestamp: str, email_count: int) -> str:
-        """Create HTML email template"""
+        """Create HTML email template optimized for email clients"""
         return f"""
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <script src="https://cdn.tailwindcss.com"></script>
+            <style>
+                /* Email client safe CSS - no CSS variables */
+                * {{
+                    box-sizing: border-box;
+                    margin: 0;
+                    padding: 0;
+                }}
+
+                body {{
+                    background-color: #eeeeee;
+                    font-family: 'Arial', 'Helvetica', sans-serif;
+                    line-height: 1.6;
+                    width: 100%;
+                    margin: 0;
+                    padding: 0;
+                }}
+
+                .email-container {{
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background-color: #eeeeee;
+                    padding: 20px;
+                }}
+
+                /* Header Section */
+                .header-section {{
+                    position: relative;
+                    margin-bottom: 30px;
+                    height: 300px; /* Fixed height to prevent overlap */
+                }}
+
+                .header-background {{
+                    width: 100%;
+                    height: 200px;
+                    background: linear-gradient(135deg, #ed4c21 0%, #112231 100%);
+                    border-radius: 8px;
+                    position: relative;
+                }}
+
+                .header-card {{
+                    position: absolute;
+                    top: 20px;
+                    left: 20px;
+                    background-color: #112231;
+                    padding: 25px;
+                    border-radius: 8px;
+                    color: #eeeeee;
+                    width: 200px;
+                }}
+
+                .header-title {{
+                    color: #eeeeee;
+                    font-size: 20px;
+                    font-weight: bold;
+                    line-height: 1.2;
+                    margin-bottom: 15px;
+                }}
+
+                .header-separator {{
+                    width: 30px;
+                    height: 3px;
+                    background-color: #ed4c21;
+                    margin: 15px 0;
+                }}
+
+                .header-feature {{
+                    color: #eeeeee;
+                    font-size: 14px;
+                    margin-bottom: 8px;
+                }}
+
+                .feature-icon {{
+                    color: #81b73e;
+                    margin-right: 8px;
+                    font-weight: bold;
+                }}
+
+                .header-button {{
+                    background-color: #ed4c21;
+                    color: #eeeeee;
+                    padding: 12px 20px;
+                    text-decoration: none;
+                    border-radius: 4px;
+                    display: inline-block;
+                    margin-top: 15px;
+                    font-weight: bold;
+                }}
+
+                .header-description {{
+                    position: relative;
+                    top: 160px;
+                    right: 20px;
+                    background-color: #eeeeee;
+                    padding: 15px;
+                    border: 2px solid #ed4c21;
+                    border-radius: 4px;
+                    max-width: 250px;
+                    color: #112231;
+                    font-size: 14px;
+                }}
+
+                /* Cards Section */
+                .cards-section {{
+                    margin: 40px 0;
+                }}
+
+                .cards-grid {{
+                    display: table;
+                    width: 100%;
+                    table-layout: fixed;
+                }}
+
+                .card-row {{
+                    display: table-row;
+                }}
+
+                .card-cell {{
+                    display: table-cell;
+                    padding: 10px;
+                    vertical-align: top;
+                    width: 33.33%;
+                }}
+
+                .info-card {{
+                    background-color: #f2f8fa;
+                    padding: 25px 20px;
+                    border-radius: 6px;
+                    text-align: left;
+                    height: 160px;
+                }}
+
+                .card-number {{
+                    color: #ed4c21;
+                    font-size: 18px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                }}
+
+                .card-title {{
+                    color: #112231;
+                    font-size: 16px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                }}
+
+                .card-description {{
+                    color: #7b7b7b;
+                    font-size: 14px;
+                    margin-bottom: 15px;
+                    line-height: 1.4;
+                }}
+
+                /* Content Section */
+                .content-section {{
+                    background-color: #112231;
+                    border-radius: 8px;
+                    padding: 30px;
+                    margin: 30px 0;
+                    color: #eeeeee;
+                }}
+
+                .content-title {{
+                    color: #eeeeee;
+                    font-size: 22px;
+                    font-weight: bold;
+                    margin-bottom: 15px;
+                }}
+
+                .content-separator {{
+                    width: 30px;
+                    height: 3px;
+                    background-color: #ed4c21;
+                    margin: 15px 0 25px 0;
+                }}
+
+                .summary-content {{
+                    background-color: rgba(255, 255, 255, 0.1);
+                    padding: 25px;
+                    border-radius: 6px;
+                    border-left: 4px solid #81b73e;
+                    color: #eeeeee;
+                }}
+
+                .summary-content h1 {{
+                    color: #eeeeee;
+                    font-size: 18px;
+                    margin: 15px 0 10px 0;
+                    font-weight: bold;
+                }}
+
+                .summary-content h2 {{
+                    color: #eeeeee;
+                    font-size: 16px;
+                    margin: 12px 0 8px 0;
+                    font-weight: bold;
+                }}
+
+                .summary-content h3 {{
+                    color: #eeeeee;
+                    font-size: 14px;
+                    margin: 10px 0 5px 0;
+                    font-weight: bold;
+                }}
+
+                .summary-content p {{
+                    color: #eeeeee;
+                    margin-bottom: 12px;
+                    line-height: 1.5;
+                }}
+
+                .summary-content ul,
+                .summary-content ol {{
+                    color: #eeeeee;
+                    margin: 10px 0 10px 20px;
+                }}
+
+                .summary-content li {{
+                    color: #eeeeee;
+                    margin-bottom: 5px;
+                }}
+
+                .summary-content strong {{
+                    color: #81b73e;
+                    font-weight: bold;
+                }}
+
+                .summary-content em {{
+                    color: #eeeeee;
+                    font-style: italic;
+                }}
+
+                .summary-content code {{
+                    background-color: rgba(255, 255, 255, 0.2);
+                    color: #81b73e;
+                    padding: 2px 6px;
+                    border-radius: 3px;
+                    font-family: monospace;
+                }}
+
+                .summary-content blockquote {{
+                    border-left: 4px solid #81b73e;
+                    padding-left: 15px;
+                    margin: 15px 0;
+                    color: #eeeeee;
+                    font-style: italic;
+                }}
+
+                /* Footer */
+                .email-footer {{
+                    text-align: center;
+                    padding: 25px;
+                    background-color: #f2f8fa;
+                    border-radius: 6px;
+                    margin-top: 30px;
+                }}
+
+                .footer-main {{
+                    color: #7b7b7b;
+                    font-style: italic;
+                    margin-bottom: 8px;
+                    font-size: 14px;
+                }}
+
+                .footer-powered {{
+                    color: #112231;
+                    font-weight: bold;
+                    font-size: 12px;
+                }}
+
+                /* Mobile responsiveness */
+                @media only screen and (max-width: 600px) {{
+                    .email-container {{
+                        padding: 10px;
+                    }}
+                    
+                    .header-card {{
+                        position: static;
+                        width: 100%;
+                        margin-bottom: 20px;
+                    }}
+                    
+                    .header-description {{
+                        position: static;
+                        max-width: 100%;
+                        margin-top: 20px;
+                    }}
+                    
+                    .cards-grid {{
+                        display: block;
+                    }}
+                    
+                    .card-cell {{
+                        display: block;
+                        width: 100%;
+                        margin-bottom: 15px;
+                    }}
+                    
+                    .info-card {{
+                        height: auto;
+                    }}
+                }}
+            </style>
         </head>
-        <body class="bg-gray-50 font-sans">
-            <div class="max-w-4xl mx-auto p-4">
-                <div class="bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-t-lg p-6 text-center">
-                    <h1 class="text-2xl font-bold m-0">📊 Email Summary Report</h1>
-                </div>
-                
-                <div class="bg-blue-50 border-l-4 border-blue-500 p-4">
-                    <div class="space-y-2 text-sm">
-                        <p><span class="font-semibold">📅 Generated:</span> {timestamp}</p>
-                        <p><span class="font-semibold">📧 Emails Analyzed:</span> {email_count}</p>
-                        <p><span class="font-semibold">🤖 AI Model:</span> {self.config.model.upper()} - {self.config.model_name}</p>
-                    </div>
-                </div>
-                
-                <div class="bg-white border border-gray-200 rounded-b-lg p-6">
-                    <div class="bg-gray-50 border-l-4 border-green-500 rounded-lg p-5">
-                        <div class="prose prose-gray max-w-none">
-                            {html_summary}
+        <body>
+            <div class="email-container">
+                <!-- Header Section -->
+                <div class="header-section">
+                    <div class="header-background">
+                        <div class="header-card">
+                            <div class="header-title">📊 EMAIL<br>SUMMARY<br>REPORT</div>
+                            <div class="header-separator"></div>
+                            <div class="header-feature">
+                                <span class="feature-icon">✓</span>AI-Powered Analysis
+                            </div>
+                            <div class="header-feature">
+                                <span class="feature-icon">✓</span>Smart Categorization
+                            </div>
+                            <div class="header-feature">
+                                <span class="feature-icon">✓</span>Action Items
+                            </div>
+                            <a href="#" class="header-button">View Details</a>
+                        </div>
+                        <div class="header-description">
+                            Intelligent email analysis powered by {self.config.model.upper()} AI technology
                         </div>
                     </div>
                 </div>
-                
-                <div class="text-center p-4 bg-gray-50 text-gray-600 text-sm">
-                    <p class="italic">Generated by Email Summary Bot</p>
-                    <p class="text-xs mt-1">Powered by {self.config.model.upper()} AI</p>
+
+                <!-- Cards Section -->
+                <div class="cards-section">
+                    <div class="cards-grid">
+                        <div class="card-row">
+                            <div class="card-cell">
+                                <div class="info-card">
+                                    <div class="card-number">01</div>
+                                    <div class="card-title">Generated</div>
+                                    <div class="card-description">{timestamp}</div>
+                                </div>
+                            </div>
+                            <div class="card-cell">
+                                <div class="info-card">
+                                    <div class="card-number">02</div>
+                                    <div class="card-title">Emails Analyzed</div>
+                                    <div class="card-description">{email_count} messages processed</div>
+                                </div>
+                            </div>
+                            <div class="card-cell">
+                                <div class="info-card">
+                                    <div class="card-number">03</div>
+                                    <div class="card-title">AI Model</div>
+                                    <div class="card-description">{self.config.model.upper()}<br>{self.config.model_name}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Content Section -->
+                <div class="content-section">
+                    <div class="content-title">📋 Analysis Results</div>
+                    <div class="content-separator"></div>
+                    <div class="summary-content">
+                        {html_summary}
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="email-footer">
+                    <div class="footer-main">This report was automatically generated by your Email Summary Bot</div>
+                    <div class="footer-powered">Powered by {self.config.model.upper()} AI</div>
                 </div>
             </div>
         </body>
