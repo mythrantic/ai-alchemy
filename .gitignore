@@ -4,5 +4,6 @@
 venv/
 .python-version
 *.egg-info
-
+__marimo__/
+app/
 .env
